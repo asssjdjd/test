@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Controller</title>
+    <style>
+        body { font-family: sans-serif; display: grid; place-items: center; min-height: 90vh; }
+        
+        /* 1. Khu vực kết nối  */
+        #connect-ui { text-align: center; }
+
+        /* 2. Khu vực điều khiển*/
+        #streaming-ui { display: none; } 
+        
+        video {
+            width: 80vw;
+            height: auto;
+            background: #333;
+            border: 2px solid #555;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+    <div id="connect-ui">
+        <h1>Kết nối tới Host</h1>
+        <p>Nhập ID của máy Host:</p>
+        <input type="text" id="hostIdInput" placeholder="123456" />
+        <button id="connectBtn">Kết nối</button>
+        <p id="status"></p>
+    </div>
+
+    <div id="streaming-ui">
+        <video id="remoteVideo" autoplay playsinline tabindex="0"></video>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    
+    <script src="eventHandlers.js"></script>
+    
+    <script src="client.js"></script>
+</body>
+</html>

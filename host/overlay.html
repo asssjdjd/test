@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Agent</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: rgba(0, 0, 0, 0.7); /* Nền mờ */
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            /* Đây là mấu chốt để kéo thả cửa sổ */
+            -webkit-app-region: drag;
+        }
+        h4 { margin: 5px 0; }
+        button {
+            background-color: #e63946;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            /* Không cho phép kéo khi click nút */
+            -webkit-app-region: no-drag;
+        }
+    </style>
+</head>
+<body>
+    <h4>Agent Đang Chạy</h4>
+    <p id="status">Đang kết nối...</p>
+    
+    <button id="disconnectBtn">Ngắt Kết Nối</button>
+    <!-- host renderer: handles signaling and WebRTC in the renderer process -->
+    <script>require('./hostRenderer.js');</script>
+</body>
+</html>

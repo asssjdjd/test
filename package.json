@@ -1,0 +1,23 @@
+{
+  "name": "untralview",
+  "version": "1.0.0",
+  "description": "",
+  "main": "host/mainHost.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start" : "electron .",
+    "start-server": "node ./server/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "cors": "^2.8.5",
+    "electron": "^39.1.0",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "ws": "^8.18.3"
+  }
+}

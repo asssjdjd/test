@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Controller (Test Sandbox)</title>
+    <style>
+        body { font-family: sans-serif; display: grid; place-items: center; min-height: 90vh; }
+        
+        /* 1. ẨN giao diện kết nối */
+        #connect-ui { display: none; } 
+
+        /* 2. HIỆN ngay giao diện điều khiển */
+        #streaming-ui { display: block; } 
+        
+        video {
+            width: 80vw;
+            height: 60vh; /* Giảm chiều cao 1 chút */
+            background: #f0f0f0;
+            border: 2px solid #333;
+            cursor: crosshair;
+        }
+        
+        /* 3. Thêm hộp Log */
+        #log-output {
+            display: block;
+            height: 20vh;
+            width: 80vw;
+            border: 1px dashed #aaa;
+            overflow-y: scroll;
+            font-family: monospace;
+            background: #f4f4f4;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="connect-ui">
+        </div>
+
+    <div id="streaming-ui">
+        <video id="remoteVideo" autoplay playsinline tabindex="0"></video>
+        <pre id="log-output">Chờ sự kiện...</pre>
+    </div>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="eventHandlers.js"></script>
+    <script src="testClient.js"></script>
+    
+</body>
+</html>
