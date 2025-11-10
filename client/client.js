@@ -8,7 +8,11 @@ const statusEl = document.getElementById('status');
 const remoteVideo = document.getElementById('remoteVideo');
 
 //  ---- Cấu hình -----
-const SIGNALING_SERVER_URL = 'https://pasty-unscarce-magnanimously.ngrok-free.dev'; // cấu hình kết nối đến Server
+// ===== SỬA URL CHO KHỚP VỚI HOST =====
+const SIGNALING_SERVER_URL = 'http://localhost:3001'; // Dùng localhost khi test local
+// Nếu dùng ngrok/loca.lt, thay bằng URL public và đảm bảo CÙNG với host
+// const SIGNALING_SERVER_URL = 'https://your-ngrok-url.ngrok-free.app';
+
 let pc; 
 let dataChannel; 
 let socket;
@@ -72,27 +76,49 @@ const iceServersConfig = {
         // 1. Máy chủ STUN (Miễn phí của Google)
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
         
-        /*  2. Máy chủ TURN (Phương án dự phòng)
+        // 2. Máy chủ TURN công khai (Metered - free tier)
+        // Thay bằng TURN server của bạn nếu cần
         {
-            urls: 'turn:your-turn-server.com:3478',
-            username: 'your-username',
-            credential: 'your-password'
+            urls: 'turn:a.relay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:a.relay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
         }
-        */
     ]
 };
 
 
 // Giai đoạn 1 : bắt tay
-socket = io(SIGNALING_SERVER_URL);
+socket = io(SIGNALING_SERVER_URL, {
+    transports: ['websocket'], // Ép dùng WebSocket
+    timeout: 10000
+});
+
 socket.on('connect', () => {
     statusEl.textContent = 'Sẵn Sàng.';
+    console.log('[Client] Đã kết nối server:', socket.id);
+});
+
+socket.on('connect_error', (err) => {
+    statusEl.textContent = 'Lỗi kết nối server: ' + err.message;
+    console.error('[Client] Lỗi kết nối:', err);
 });
 
 // Thông báo phòng đẩy không thể join được nữa
 socket.on('room_full', (roomId) => {
     statusEl.textContent = `Lỗi: Phòng ${roomId} đã đầy hoặc đang bận.`;
+});
+
+// ===== NHẬN THÔNG BÁO LỖI TỪ HOST =====
+socket.on('error', (errorData) => {
+    console.error('[Client] Lỗi từ host:', errorData);
+    statusEl.textContent = `Lỗi từ host: ${errorData.message || 'Unknown error'}`;
 });
 
 // Bước 3 : Sau khi người dùng ấn nút để kết nối
@@ -104,6 +130,22 @@ connectBtn.onclick = async () => {
     // Khởi tạo các kết nói
     pc = new RTCPeerConnection(iceServersConfig);
 
+    // ===== THÊM ICE CONNECTION STATE MONITORING =====
+    pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        console.log('[Client] ICE connection state:', state);
+        
+        if (state === 'connected') {
+            statusEl.textContent = '✅ Đã kết nối WebRTC!';
+        } else if (state === 'checking') {
+            statusEl.textContent = '🔄 Đang kiểm tra kết nối...';
+        } else if (state === 'failed') {
+            statusEl.textContent = '❌ Kết nối thất bại (kiểm tra firewall/NAT)';
+        } else if (state === 'disconnected') {
+            statusEl.textContent = '⚠️ Mất kết nối';
+        }
+    };
+
     // ngay khi tìm thấy hay bắt được địa chỉ thì sự khiện sẽ kích hoạt và gửi địa chỉ đó đế 
     pc.onicecandidate = (event) => {
         if(event.candidate) {
@@ -114,12 +156,22 @@ connectBtn.onclick = async () => {
 
     // Gắn sự kiện để nhận được video
     pc.ontrack = (event) => {
+        console.log('[Client] Đã nhận stream từ host');
         remoteVideo.srcObject = event.streams[0];
 
         // Khi nhận được video từ host thì loại bỏ UI không cần thiết
         connectUI.style.display = 'none';
         streamingUI.style.display ='block';
         remoteVideo.focus();
+        
+        statusEl.textContent = '✅ Đang hiển thị màn hình host';
+        
+        // Cập nhật videoStatus nếu có
+        const videoStatus = document.getElementById('videoStatus');
+        if (videoStatus) {
+            videoStatus.textContent = '✅ Video đang stream từ host';
+            videoStatus.style.background = 'rgba(0,255,0,0.7)';
+        }
     };
 
     // bước 5 : Gắn miệng nơi sẽ bắt các sự kiện của client (kênh điều khiển)
@@ -133,15 +185,46 @@ connectBtn.onclick = async () => {
 
     // Bước 9 : Chấp nhận (Answer) từ HOST
     socket.on('answer', async (answer) => {
+       console.log('[Client] Đã nhận answer từ host');
        await pc.setRemoteDescription(new RTCSessionDescription(answer));
     });
     
+    // ===== XỬ LÝ CANDIDATE QUEUE ĐỂ TRÁNH RACE CONDITION =====
+    const candidateQueue = [];
+    let remoteDescriptionSet = false;
+    
     // Bước 11 (Phần 2) : Nhận "Địa chỉ" (Candidate)
     socket.on('candidate', (candidate) => {
-       pc.addIceCandidate(new RTCIceCandidate(candidate));
+        console.log('[Client] Nhận candidate từ host');
+        
+        if (remoteDescriptionSet) {
+            pc.addIceCandidate(new RTCIceCandidate(candidate))
+                .catch(err => console.error('Lỗi addIceCandidate:', err));
+        } else {
+            // Queue nếu chưa set remote description
+            candidateQueue.push(candidate);
+        }
     });
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     socket.emit('offer', offer, hostId, socket.id);
+    
+    console.log('[Client] Đã gửi offer tới host:', hostId);
+    
+    // Sau khi nhận answer, set flag và process queue
+    const originalAnswerHandler = socket.listeners('answer')[0];
+    socket.off('answer', originalAnswerHandler);
+    socket.on('answer', async (answer) => {
+        console.log('[Client] Đã nhận answer từ host');
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        remoteDescriptionSet = true;
+        
+        // Process queued candidates
+        while (candidateQueue.length > 0) {
+            const candidate = candidateQueue.shift();
+            await pc.addIceCandidate(new RTCIceCandidate(candidate))
+                .catch(err => console.error('Lỗi addIceCandidate (queued):', err));
+        }
+    });
 };

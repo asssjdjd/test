@@ -1,24 +1,62 @@
 // hostRenderer.js (ĐÃ SỬA)
 
-// Lấy API từ preload
-const { sendControl, quitApp, getDesktopSources } = window.electronAPI;
+console.log('[hostRenderer] Script loaded');
 
-// Lấy 'io' từ CDN (global window object)
-// 'defer' trong HTML đảm bảo 'io' tồn tại trước khi code này chạy
-const { io } = window; 
+// ===== CHỜ PRELOAD LOAD XONG =====
+let retryCount = 0;
+const maxRetries = 10;
 
-//const SIGNALING_SERVER_URL = 'https://pasty-unscarce-magnanimously.ngrok-free.dev';
-const SIGNALING_SERVER_URL ='https://cuddly-lemons-repair.loca.lt'
-
-const statusEl = document.getElementById('status');
-let socket;
-
-function logStatus(msg) {
-    if (statusEl) statusEl.textContent = msg;
-    console.log('[HostRenderer]', msg);
+function checkAndInit() {
+    console.log(`[hostRenderer] Retry ${retryCount}: checking electronAPI...`);
+    
+    if (window.electronAPI && window.electronAPI.getDesktopSources) {
+        console.log('[hostRenderer] ✅ electronAPI sẵn sàng!');
+        initHost();
+    } else if (retryCount < maxRetries) {
+        retryCount++;
+        console.log(`[hostRenderer] ⏳ electronAPI chưa sẵn sàng, retry sau 100ms (${retryCount}/${maxRetries})...`);
+        setTimeout(checkAndInit, 100);
+    } else {
+        const errorMsg = 'LỖI NGHIÊM TRỌNG: Preload không load được sau 1 giây!';
+        console.error('[hostRenderer] ❌', errorMsg);
+        document.getElementById('status').textContent = errorMsg;
+    }
 }
 
-async function start() {
+// Bắt đầu check
+checkAndInit();
+
+function initHost() {
+    console.log('[hostRenderer] === INIT HOST START ===');
+    // ===== DEBUG: Kiểm tra window.electronAPI =====
+    console.log('[hostRenderer] Checking window.electronAPI:', window.electronAPI);
+    if (window.electronAPI) {
+        console.log('[hostRenderer] Available APIs:', Object.keys(window.electronAPI));
+    } else {
+        console.error('[hostRenderer] ❌ window.electronAPI is undefined! Check preload.js');
+    }
+
+    // Lấy API từ preload
+    const { sendControl, quitApp, getDesktopSources } = window.electronAPI || {};
+
+    // Lấy 'io' từ CDN (global window object)
+    // 'defer' trong HTML đảm bảo 'io' tồn tại trước khi code này chạy
+    const { io } = window; 
+
+    // ===== SỬA URL CHO KHỚP VỚI CLIENT =====
+    const SIGNALING_SERVER_URL = 'http://localhost:3001'; // Dùng localhost khi test local
+    // Nếu dùng ngrok/loca.lt, thay bằng URL public và đảm bảo CÙNG với client
+    // const SIGNALING_SERVER_URL = 'https://your-ngrok-url.ngrok-free.app';
+
+    const statusEl = document.getElementById('status');
+    let socket;
+
+    function logStatus(msg) {
+        if (statusEl) statusEl.textContent = msg;
+        console.log('[HostRenderer]', msg);
+    }
+
+    async function start() {
     
     // === THÊM KIỂM TRA NÀY ===
     if (typeof io !== 'function') {
@@ -29,7 +67,12 @@ async function start() {
     }
     // ===========================
 
-    socket = io(SIGNALING_SERVER_URL);
+    // ===== ÉP DÙNG WEBSOCKET, TRÁNH POLLING =====
+    socket = io(SIGNALING_SERVER_URL, {
+        transports: ['websocket'],
+        timeout: 10000,
+        reconnectionAttempts: 5
+    });
 
     socket.on('connect', () => {
         logStatus(`Kết nối signaling: ${socket.id}`);
@@ -39,6 +82,14 @@ async function start() {
     socket.on('connect_error', (err) => {
         console.error('[HostRenderer] LỖI KẾT NỐI:', err.message);
         logStatus(`Lỗi kết nối: ${err.message}`);
+    });
+
+    socket.io.on('reconnect_attempt', (n) => {
+        console.log('[HostRenderer] Thử kết nối lại lần', n);
+    });
+
+    socket.io.on('error', (err) => {
+        console.error('[HostRenderer] Socket.IO error:', err);
     });
 
     // ... (Toàn bộ code 'socket.on('offer', ...)' và phần còn lại Y HỆT NHƯ CŨ) ...
@@ -80,9 +131,22 @@ async function start() {
             // ===== LẤY DESKTOP STREAM =====
             let stream = null;
             try {
-                const sources = await getDesktopSources({ types: ['screen', 'window'] });
+                console.log('[hostRenderer] Bắt đầu lấy desktop stream...');
+                console.log('[hostRenderer] window.electronAPI:', window.electronAPI);
+                console.log('[hostRenderer] getDesktopSources:', getDesktopSources);
                 
-                if (sources.length === 0) {
+                // Kiểm tra xem getDesktopSources có tồn tại không
+                if (!getDesktopSources) {
+                    throw new Error('getDesktopSources không tồn tại! window.electronAPI = ' + 
+                        JSON.stringify(window.electronAPI ? Object.keys(window.electronAPI) : null));
+                }
+
+                logStatus('Đang lấy danh sách nguồn màn hình...');
+                console.log('[hostRenderer] Calling getDesktopSources...');
+                const sources = await getDesktopSources({ types: ['screen', 'window'] });
+                console.log('[hostRenderer] getSources returned:', sources ? sources.length : 'null');
+                
+                if (!sources || sources.length === 0) {
                     throw new Error('Không tìm thấy nguồn màn hình nào');
                 }
 
@@ -110,6 +174,12 @@ async function start() {
             } catch (err) {
                 console.error('Lỗi khi lấy màn hình:', err);
                 logStatus('Lỗi khi lấy màn hình: ' + (err.message || err));
+                
+                // ===== THÔNG BÁO LỖI CHO CLIENT =====
+                socket.emit('error', { 
+                    type: 'screen_capture_failed', 
+                    message: err.message || 'Không thể lấy màn hình' 
+                });
                 return;
             }
 
@@ -120,11 +190,20 @@ async function start() {
             socket.emit('answer', answer, fromId);
             logStatus('Đã gửi answer trở lại client');
 
+            // ===== XỬ LÝ CANDIDATE QUEUE ĐỂ TRÁNH RACE CONDITION =====
+            const candidateQueue = [];
+            let remoteDescriptionSet = true; // Đã set rồi
+
             const candidateHandler = (candidate) => {
                 if (!candidate) return;
-                pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(err => {
-                    console.error('Lỗi addIceCandidate:', err);
-                });
+                
+                if (remoteDescriptionSet) {
+                    pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(err => {
+                        console.error('Lỗi addIceCandidate:', err);
+                    });
+                } else {
+                    candidateQueue.push(candidate);
+                }
             };
 
             socket.on('candidate', candidateHandler);
@@ -152,14 +231,15 @@ async function start() {
     });
 }
 
-const disconnectBtn = document.getElementById('disconnectBtn');
-if (disconnectBtn) {
-    disconnectBtn.addEventListener('click', () => {
-        if (socket) socket.disconnect();
-        quitApp();
-    });
-}
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    if (disconnectBtn) {
+        disconnectBtn.addEventListener('click', () => {
+            if (socket) socket.disconnect();
+            quitApp();
+        });
+    }
 
-// `defer` trong HTML sẽ đảm bảo các file được tải xong
-// trước khi hàm start() này được gọi
-start().catch(err => console.error('Start failed', err));
+    // `defer` trong HTML sẽ đảm bảo các file được tải xong
+    // trước khi hàm start() này được gọi
+    start().catch(err => console.error('Start failed', err));
+} // End of initHost()

@@ -23,11 +23,12 @@ function createOverlayWindow() {
         frame: false,
         alwaysOnTop: true,
         webPreferences: {
-            // ===== SỬA ĐỔI Ở ĐÂY =====
-            preload: path.join(__dirname, 'preload.js'), // ✅ Thêm preload
-            nodeIntegration: false,  // ✅ Tắt (bảo mật hơn)
-            contextIsolation: true   // ✅ Bật (bảo mật hơn)
-            // ===== KẾT THÚC SỬA ĐỔI =====
+            preload: path.join(__dirname, 'preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true,
+            enableRemoteModule: false,
+            // ===== ENABLE DESKTOP CAPTURER =====
+            webSecurity: true
         }
     });
 
@@ -80,3 +81,18 @@ ipcMain.on('control', async (event, command) => {
 ipcMain.on('quit-app', () => {
     app.quit();
 });
+
+// ===== THÊM HANDLER CHO DESKTOP SOURCES =====
+ipcMain.handle('get-desktop-sources', async (event, opts) => {
+    console.log('[main] get-desktop-sources called with opts:', opts);
+    try {
+        const { desktopCapturer } = require('electron');
+        const sources = await desktopCapturer.getSources(opts);
+        console.log('[main] Found', sources.length, 'sources');
+        return sources;
+    } catch (err) {
+        console.error('[main] Error getting desktop sources:', err);
+        throw err;
+    }
+});
+// ===== END =====

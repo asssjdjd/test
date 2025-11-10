@@ -9,10 +9,34 @@ const io = new Server(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    }
+    },
+    transports: ['websocket', 'polling']
 });
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
+
+// ===== THÊM HEALTH CHECK ROUTES =====
+app.get('/', (req, res) => {
+    res.send('Signaling Server đang chạy OK!');
+});
+
+app.get('/status', (req, res) => {
+    res.json({ 
+        ok: true, 
+        port: PORT, 
+        timestamp: Date.now(),
+        connections: io.engine.clientsCount
+    });
+});
+
+// ===== LOG LỖI ENGINE.IO =====
+io.engine.on('connection_error', (err) => {
+    console.error('[ENGINE.IO ERROR]', {
+        message: err.message,
+        code: err.code,
+        context: err.context
+    });
+});
 
 io.on('connection', (socket) => {
     console.log(`KẾT NỐI MỚI: ${socket.id} đã kết nối.`);
@@ -36,7 +60,8 @@ io.on('connection', (socket) => {
    socket.on('offer', (offer, roomId, fromId) => {
         console.log(` CHUYỂN OFFER: Từ ${fromId} (Client) tới phòng '${roomId}' (Host).`);
         // Gửi "offer" tới TẤT CẢ mọi người trong phòng (trừ người gửi)
-        socket.to(roomId).emit('offer', offer, fromId);
+        const sent = socket.to(roomId).emit('offer', offer, fromId);
+        console.log(`   → Offer đã gửi tới phòng ${roomId}`);
     });
 
     // Khi Host gửi "Answer"
@@ -44,6 +69,7 @@ io.on('connection', (socket) => {
         console.log(`CHUYỂN ANSWER: Từ ${socket.id} (Host) tới '${targetSocketId}' (Client).`);
         // Gửi "answer" trả lại CHÍNH XÁC cho Client đã hỏi
         socket.to(targetSocketId).emit('answer', answer);
+        console.log(`   → Answer đã gửi tới ${targetSocketId}`);
     });
 
     // --- 3. Giai đoạn Trao đổi "Địa chỉ" (Candidate) ---
@@ -59,10 +85,19 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(` NGẮT KẾT NỐI: ${socket.id} đã rời đi.`);
     });
+    
+    // ===== XỬ LÝ LỖI TỪ CLIENT/HOST =====
+    socket.on('error', (errorData) => {
+        console.error(`[LỖI từ ${socket.id}]:`, errorData);
+        // Forward lỗi tới các peer khác trong phòng nếu cần
+        socket.broadcast.emit('error', errorData);
+    });
 
 });
 
 server.listen(PORT, () => {
    console.log(` Signaling Server (Bản Đầy Đủ) đang chạy trên cổng ${PORT}`);
+   console.log(`   URL: http://localhost:${PORT}`);
+   console.log(`   Health check: http://localhost:${PORT}/status`);
    console.log(`   (Hỗ trợ cả LAN và Non-LAN)`);
 });
