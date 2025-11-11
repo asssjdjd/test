@@ -13,6 +13,11 @@
             background: #333;
             border: 2px solid #555;
             cursor: crosshair;
+            outline: none;
+        }
+        video:focus {
+            border-color: #0080ff;
+            box-shadow: 0 0 10px rgba(0,128,255,0.5);
         }
         button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
         input { padding: 10px; font-size: 16px; width: 300px; }
@@ -46,7 +51,7 @@
         const statusEl = document.getElementById('status');
         const remoteVideo = document.getElementById('remoteVideo');
         
-        const SIGNALING_SERVER_URL = 'http://localhost:3001';
+        const SIGNALING_SERVER_URL = 'https://pasty-unscarce-magnanimously.ngrok-free.dev/';
         let pc, socket;
         
         const iceServersConfig = {
@@ -126,7 +131,24 @@
             };
             
             // Create data channel
-            const dc = pc.createDataChannel('control');
+            const dc = pc.createDataChannel('control', {
+                ordered: false,
+                maxRetransmits: 0
+            });
+            
+            // === EVENT HANDLER SETUP ===
+            dc.onopen = () => {
+                console.log('[Client] ✅ Data channel opened!');
+                setupRemoteControl(remoteVideo, dc);
+            };
+            
+            dc.onclose = () => {
+                console.log('[Client] ❌ Data channel closed');
+            };
+            
+            dc.onerror = (err) => {
+                console.error('[Client] Data channel error:', err);
+            };
             
             // Handle answer
             socket.on('answer', async (answer) => {
@@ -146,6 +168,181 @@
             
             console.log('[Client] Offer sent to:', hostId);
         };
+        
+        // ========================================
+        // EVENT HANDLERS - REMOTE CONTROL LOGIC
+        // ========================================
+        
+        let lastMoveTime = 0;
+        const MOVE_THROTTLE_MS = 50;
+        let scrollTimeout;
+        let accumulatedDeltaY = 0;
+        const SCROLL_DEBOUNCE_MS = 100;
+        let eventQueue = [];
+        let batchTimeout;
+        const BATCH_INTERVAL_MS = 20;
+        let activeDataChannel = null;
+        
+        function sendCommand(payload) {
+            if (!activeDataChannel || activeDataChannel.readyState !== 'open') {
+                console.warn('[Client] Cannot send - data channel not open');
+                return;
+            }
+            
+            // LOW PRIORITY - batch mouse/scroll
+            if (payload.type === 'mousemove' || payload.type === 'scroll') {
+                const lastEventIndex = eventQueue.findLastIndex(e => e.type === payload.type);
+                
+                if (lastEventIndex !== -1) {
+                    eventQueue[lastEventIndex] = payload;
+                } else {
+                    eventQueue.push(payload);
+                }
+                
+                clearTimeout(batchTimeout);
+                batchTimeout = setTimeout(flushLowPriorityQueue, BATCH_INTERVAL_MS);
+                
+            } else {
+                // HIGH PRIORITY - send immediately
+                flushLowPriorityQueue();
+                
+                const batch = [payload];
+                activeDataChannel.send(JSON.stringify(batch));
+                console.log('[Client] Sent critical:', payload.type);
+            }
+        }
+        
+        function flushLowPriorityQueue() {
+            if (eventQueue.length === 0) return;
+            
+            if (activeDataChannel && activeDataChannel.readyState === 'open') {
+                const batch = [...eventQueue];
+                eventQueue = [];
+                activeDataChannel.send(JSON.stringify(batch));
+            }
+        }
+        
+        function getScaledCoordinates(e, videoEl) {
+            const rect = videoEl.getBoundingClientRect();
+            const videoWidth = videoEl.videoWidth;
+            const videoHeight = videoEl.videoHeight;
+            
+            const actualWidth = videoWidth > 0 ? videoWidth : rect.width;
+            const actualHeight = videoHeight > 0 ? videoHeight : rect.height;
+            
+            const scaleX = actualWidth / rect.width;
+            const scaleY = actualHeight / rect.height;
+            
+            return {
+                x: Math.round((e.clientX - rect.left) * scaleX),
+                y: Math.round((e.clientY - rect.top) * scaleY)
+            };
+        }
+        
+        function handleMouseMove(e) {
+            const currentTime = Date.now();
+            if (currentTime - lastMoveTime < MOVE_THROTTLE_MS) return;
+            lastMoveTime = currentTime;
+            
+            const coords = getScaledCoordinates(e, this);
+            if (!coords) return;
+            
+            sendCommand({
+                type: "mousemove",
+                x: coords.x,
+                y: coords.y
+            });
+        }
+        
+        function handleWheel(e) {
+            e.preventDefault();
+            accumulatedDeltaY += e.deltaY;
+            clearTimeout(scrollTimeout);
+            
+            scrollTimeout = setTimeout(() => {
+                sendCommand({
+                    type: "scroll",
+                    deltaY: accumulatedDeltaY
+                });
+                accumulatedDeltaY = 0;
+            }, SCROLL_DEBOUNCE_MS);
+        }
+        
+        function handleMouseDown(e) {
+            e.preventDefault();
+            const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+            const coords = getScaledCoordinates(e, this);
+            if (!coords) return;
+            
+            sendCommand({ type: "down", button, x: coords.x, y: coords.y });
+        }
+        
+        function handleMouseUp(e) {
+            e.preventDefault();
+            const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+            const coords = getScaledCoordinates(e, this);
+            if (!coords) return;
+            
+            sendCommand({ type: "up", button, x: coords.x, y: coords.y });
+        }
+        
+        function handleContextMenu(e) {
+            e.preventDefault();
+        }
+        
+        function handleKeyDown(e) {
+            e.preventDefault();
+            if (e.repeat) return;
+            
+            sendCommand({
+                type: "keydown",
+                key: e.key,
+                code: e.code,
+                ctrlKey: e.ctrlKey,
+                shiftKey: e.shiftKey,
+                altKey: e.altKey,
+                metaKey: e.metaKey,
+            });
+        }
+        
+        function handleKeyUp(e) {
+            e.preventDefault();
+            sendCommand({ type: "keyup", key: e.key, code: e.code });
+        }
+        
+        function handleFocus() {
+            this.style.borderColor = "blue";
+            console.log('[Client] Video focused - controls active');
+        }
+        
+        function handleBlur() {
+            this.style.borderColor = "#555";
+            console.log('[Client] Video blurred - controls inactive');
+        }
+        
+        function setupRemoteControl(videoElement, dataChannel) {
+            activeDataChannel = dataChannel;
+            
+            videoElement.setAttribute('tabindex', '0');
+            
+            videoElement.addEventListener('mousemove', handleMouseMove);
+            videoElement.addEventListener('wheel', handleWheel);
+            videoElement.addEventListener('mousedown', handleMouseDown);
+            videoElement.addEventListener('mouseup', handleMouseUp);
+            videoElement.addEventListener('contextmenu', handleContextMenu);
+            videoElement.addEventListener('keydown', handleKeyDown);
+            videoElement.addEventListener('keyup', handleKeyUp);
+            videoElement.addEventListener('focus', handleFocus);
+            videoElement.addEventListener('blur', handleBlur);
+            
+            console.log('[Client] ✅ Remote control events attached to video');
+            
+            // Auto focus
+            setTimeout(() => {
+                videoElement.focus();
+                console.log('[Client] Auto-focused video element');
+            }, 500);
+        }
         
         console.log('=== CLIENT SCRIPT READY ===');
     </script>

@@ -9,7 +9,7 @@ const remoteVideo = document.getElementById('remoteVideo');
 
 //  ---- Cấu hình -----
 // ===== SỬA URL CHO KHỚP VỚI HOST =====
-const SIGNALING_SERVER_URL = 'http://localhost:3001'; // Dùng localhost khi test local
+const SIGNALING_SERVER_URL = 'https://pasty-unscarce-magnanimously.ngrok-free.dev/'; // Dùng localhost khi test local
 // Nếu dùng ngrok/loca.lt, thay bằng URL public và đảm bảo CÙNG với host
 // const SIGNALING_SERVER_URL = 'https://your-ngrok-url.ngrok-free.app';
 
