@@ -168,7 +168,17 @@ function initHost() {
                     }
                 });
 
-                stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                console.log('[hostRenderer] Stream created:', stream);
+                console.log('[hostRenderer] Stream tracks:', stream.getTracks());
+                console.log('[hostRenderer] Track count:', stream.getTracks().length);
+                
+                stream.getTracks().forEach((track, index) => {
+                    console.log(`[hostRenderer] Adding track ${index}:`, track.kind, track.id, track.enabled);
+                    const sender = pc.addTrack(track, stream);
+                    console.log(`[hostRenderer] Track ${index} added, sender:`, sender);
+                });
+                
+                console.log('[hostRenderer] PC senders after addTrack:', pc.getSenders().length);
                 logStatus('Stream đã được thêm vào peer connection');
 
             } catch (err) {

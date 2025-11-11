@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Controller - NEW</title>
+    <style>
+        body { font-family: sans-serif; display: grid; place-items: center; min-height: 90vh; background: #111; color: white; }
+        #connect-ui { text-align: center; }
+        #streaming-ui { display: none; } 
+        video {
+            width: 80vw;
+            height: auto;
+            background: #333;
+            border: 2px solid #555;
+            cursor: crosshair;
+        }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        input { padding: 10px; font-size: 16px; width: 300px; }
+    </style>
+</head>
+<body>
+    <div id="connect-ui">
+        <h1>🎮 Kết nối tới Host</h1>
+        <p>Nhập ID của máy Host:</p>
+        <input type="text" id="hostIdInput" placeholder="abc123xyz" />
+        <button id="connectBtn">Kết nối</button>
+        <p id="status" style="color: yellow;"></p>
+    </div>
+
+    <div id="streaming-ui">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <p style="color: lime; position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px;">
+            ✅ Đang streaming từ host
+        </p>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    
+    <script>
+        console.log('=== CLIENT SCRIPT START ===');
+        
+        const connectUI = document.getElementById('connect-ui');
+        const streamingUI = document.getElementById('streaming-ui');
+        const hostIdInput = document.getElementById('hostIdInput');
+        const connectBtn = document.getElementById('connectBtn');
+        const statusEl = document.getElementById('status');
+        const remoteVideo = document.getElementById('remoteVideo');
+        
+        const SIGNALING_SERVER_URL = 'http://localhost:3001';
+        let pc, socket;
+        
+        const iceServersConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'turn:a.relay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+            ]
+        };
+        
+        socket = io(SIGNALING_SERVER_URL, { transports: ['websocket'] });
+        
+        socket.on('connect', () => {
+            statusEl.textContent = 'Sẵn sàng - ID: ' + socket.id;
+            console.log('[Client] Connected:', socket.id);
+        });
+        
+        socket.on('connect_error', (err) => {
+            statusEl.textContent = 'Lỗi: ' + err.message;
+            console.error('[Client] Error:', err);
+        });
+        
+        connectBtn.onclick = async () => {
+            const hostId = hostIdInput.value.trim();
+            if (!hostId) {
+                alert('Nhập Host ID!');
+                return;
+            }
+            
+            statusEl.textContent = 'Đang kết nối...';
+            console.log('[Client] Connecting to host:', hostId);
+            
+            pc = new RTCPeerConnection(iceServersConfig);
+            
+            // === ADD TRANSCEIVER TO RECEIVE VIDEO ===
+            console.log('[Client] *** ADDING TRANSCEIVER ***');
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            
+            // === ONTRACK - QUAN TRỌNG NHẤT ===
+            console.log('[Client] *** SETTING UP ONTRACK ***');
+            pc.ontrack = (event) => {
+                console.log('[Client] ========== ONTRACK FIRED ==========');
+                console.log('[Client] Event:', event);
+                console.log('[Client] Streams:', event.streams);
+                console.log('[Client] Track:', event.track);
+                
+                if (!event.streams || event.streams.length === 0) {
+                    console.error('[Client] ❌ No streams!');
+                    return;
+                }
+                
+                const stream = event.streams[0];
+                console.log('[Client] ✅ Got stream with', stream.getTracks().length, 'tracks');
+                
+                remoteVideo.srcObject = stream;
+                connectUI.style.display = 'none';
+                streamingUI.style.display = 'block';
+                
+                remoteVideo.play().then(() => {
+                    console.log('[Client] ✅ Video playing!');
+                    statusEl.textContent = '✅ Streaming!';
+                }).catch(err => {
+                    console.error('[Client] ❌ Play error:', err);
+                });
+            };
+            
+            pc.oniceconnectionstatechange = () => {
+                console.log('[Client] ICE state:', pc.iceConnectionState);
+                if (pc.iceConnectionState === 'connected') {
+                    statusEl.textContent = 'WebRTC connected!';
+                }
+            };
+            
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('candidate', event.candidate, hostId);
+                }
+            };
+            
+            // Create data channel
+            const dc = pc.createDataChannel('control');
+            
+            // Handle answer
+            socket.on('answer', async (answer) => {
+                console.log('[Client] Got answer');
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            });
+            
+            // Handle candidates
+            socket.on('candidate', (candidate) => {
+                pc.addIceCandidate(new RTCIceCandidate(candidate));
+            });
+            
+            // Create and send offer
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit('offer', offer, hostId, socket.id);
+            
+            console.log('[Client] Offer sent to:', hostId);
+        };
+        
+        console.log('=== CLIENT SCRIPT READY ===');
+    </script>
+</body>
+</html>

@@ -155,14 +155,42 @@ connectBtn.onclick = async () => {
     };
 
     // Gắn sự kiện để nhận được video
+    console.log('[Client] Setting up ontrack handler...');
     pc.ontrack = (event) => {
+        console.log('[Client] ========== ONTRACK FIRED ==========');
+        console.log('[Client] Event:', event);
+        console.log('[Client] Streams:', event.streams);
+        console.log('[Client] Streams length:', event.streams ? event.streams.length : 0);
+        console.log('[Client] Track:', event.track);
+        console.log('[Client] Track kind:', event.track ? event.track.kind : 'undefined');
+        console.log('[Client] Track id:', event.track ? event.track.id : 'undefined');
+        
+        if (!event.streams || event.streams.length === 0) {
+            console.error('[Client] ❌ No streams in ontrack event!');
+            return;
+        }
+        
+        const stream = event.streams[0];
+        console.log('[Client] Stream:', stream);
+        console.log('[Client] Stream tracks:', stream.getTracks());
         console.log('[Client] Đã nhận stream từ host');
-        remoteVideo.srcObject = event.streams[0];
+        
+        remoteVideo.srcObject = stream;
+        console.log('[Client] Set remoteVideo.srcObject');
 
         // Khi nhận được video từ host thì loại bỏ UI không cần thiết
         connectUI.style.display = 'none';
         streamingUI.style.display ='block';
+        
+        console.log('[Client] UI switched, calling focus and play...');
         remoteVideo.focus();
+        
+        // Force play
+        remoteVideo.play().then(() => {
+            console.log('[Client] ✅ Video.play() succeeded');
+        }).catch(err => {
+            console.error('[Client] ❌ Video.play() failed:', err);
+        });
         
         statusEl.textContent = '✅ Đang hiển thị màn hình host';
         
@@ -172,6 +200,8 @@ connectBtn.onclick = async () => {
             videoStatus.textContent = '✅ Video đang stream từ host';
             videoStatus.style.background = 'rgba(0,255,0,0.7)';
         }
+        
+        console.log('[Client] ========== ONTRACK COMPLETE ==========');
     };
 
     // bước 5 : Gắn miệng nơi sẽ bắt các sự kiện của client (kênh điều khiển)
@@ -183,15 +213,24 @@ connectBtn.onclick = async () => {
     // GỌI HÀM SETUP TỪ FILE eventHandlers.js
     setupEventListeners(remoteVideo); 
 
+    // ===== XỬ LÝ CANDIDATE QUEUE - KHAI BÁO TRƯỚC =====
+    const candidateQueue = [];
+    let remoteDescriptionSet = false;
+    
     // Bước 9 : Chấp nhận (Answer) từ HOST
     socket.on('answer', async (answer) => {
        console.log('[Client] Đã nhận answer từ host');
        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+       remoteDescriptionSet = true;  // ✅ Set flag
+       
+       // Process queued candidates
+       console.log('[Client] Processing', candidateQueue.length, 'queued candidates');
+       while (candidateQueue.length > 0) {
+           const candidate = candidateQueue.shift();
+           await pc.addIceCandidate(new RTCIceCandidate(candidate))
+               .catch(err => console.error('[Client] Lỗi addIceCandidate (queued):', err));
+       }
     });
-    
-    // ===== XỬ LÝ CANDIDATE QUEUE ĐỂ TRÁNH RACE CONDITION =====
-    const candidateQueue = [];
-    let remoteDescriptionSet = false;
     
     // Bước 11 (Phần 2) : Nhận "Địa chỉ" (Candidate)
     socket.on('candidate', (candidate) => {
@@ -199,10 +238,11 @@ connectBtn.onclick = async () => {
         
         if (remoteDescriptionSet) {
             pc.addIceCandidate(new RTCIceCandidate(candidate))
-                .catch(err => console.error('Lỗi addIceCandidate:', err));
+                .catch(err => console.error('[Client] Lỗi addIceCandidate:', err));
         } else {
             // Queue nếu chưa set remote description
             candidateQueue.push(candidate);
+            console.log('[Client] Queued candidate, total:', candidateQueue.length);
         }
     });
 
@@ -211,20 +251,4 @@ connectBtn.onclick = async () => {
     socket.emit('offer', offer, hostId, socket.id);
     
     console.log('[Client] Đã gửi offer tới host:', hostId);
-    
-    // Sau khi nhận answer, set flag và process queue
-    const originalAnswerHandler = socket.listeners('answer')[0];
-    socket.off('answer', originalAnswerHandler);
-    socket.on('answer', async (answer) => {
-        console.log('[Client] Đã nhận answer từ host');
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        remoteDescriptionSet = true;
-        
-        // Process queued candidates
-        while (candidateQueue.length > 0) {
-            const candidate = candidateQueue.shift();
-            await pc.addIceCandidate(new RTCIceCandidate(candidate))
-                .catch(err => console.error('Lỗi addIceCandidate (queued):', err));
-        }
-    });
 };
