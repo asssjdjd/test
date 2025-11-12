@@ -1,9 +1,40 @@
 
-const {mouse, keyboard, screen, Button, Point} =  require("@nut-tree-fork/nut-js");
+const {mouse, keyboard, screen, Button, Point, Key} =  require("@nut-tree-fork/nut-js");
 
 mouse.config.autoDelayMs = 0;
 keyboard.config.autoDelayMs = 0;
 screen.config.autoDelayMs = 0;
+
+// Map common string names to nut-js Key enum values. Returns null if unknown.
+function mapToKeyEnum(keyStr) {
+    if (!keyStr) return null;
+    const normalized = String(keyStr).replace(/^Key/i, '').toUpperCase();
+
+    const nameMap = {
+        'ENTER': Key.Enter,
+        'BACKSPACE': Key.Backspace,
+        'TAB': Key.Tab,
+        'ESC': Key.Escape,
+        'ESCAPE': Key.Escape,
+        'ARROWUP': Key.ArrowUp,
+        'ARROWDOWN': Key.ArrowDown,
+        'ARROWLEFT': Key.ArrowLeft,
+        'ARROWRIGHT': Key.ArrowRight,
+        'CONTROL': Key.LeftControl || Key.Control,
+        'CTRL': Key.LeftControl || Key.Control,
+        'SHIFT': Key.LeftShift || Key.Shift,
+        'ALT': Key.LeftAlt || Key.Alt,
+        'META': Key.MetaLeft || Key.Meta,
+        'LEFT': Key.ArrowLeft,
+        'RIGHT': Key.ArrowRight,
+        'UP': Key.ArrowUp,
+        'DOWN': Key.ArrowDown,
+    };
+
+    if (nameMap[normalized]) return nameMap[normalized];
+    if (Key[normalized]) return Key[normalized];
+    return null;
+}
 
 async function handleEvent(type, data) {
     // Normalize incoming type names (client may send 'mousemove')
@@ -29,12 +60,39 @@ async function handleEvent(type, data) {
             // client sends deltaY; convert to an amount nut-js expects
             await mouse.scrollDown(Math.abs(data.deltaY || data.y) / 100);
             break;
-        case 'keydown':
-            await keyboard.pressKey(data.code || data.key);
+        case 'keydown': {
+            // Either a printable character or a named key (Enter, ArrowUp, etc.)
+            const keyOrCode = data.key || data.code;
+
+            // If it's a single printable character, use keyboard.type()
+            if (typeof keyOrCode === 'string' && keyOrCode.length === 1) {
+                // keyboard.type will emit press+release for the character
+                await keyboard.type(keyOrCode);
+                console.log('Typed character via keyboard.type:', keyOrCode);
+                break;
+            }
+
+            // Map common names to Key enum values (fall back to Key[...] if available)
+            const mapped = mapToKeyEnum(keyOrCode);
+            if (mapped) {
+                await keyboard.pressKey(mapped);
+            } else {
+                console.warn('Unknown key for press:', keyOrCode);
+            }
             break;
-        case 'keyup':
-            await keyboard.releaseKey(data.code || data.key);
+        }
+        case 'keyup': {
+            const keyOrCode = data.key || data.code;
+            // For printable characters we used keyboard.type() (already pressed+released),
+            // so there's nothing to release here; only try release for mapped Keys.
+            const mapped = mapToKeyEnum(keyOrCode);
+            if (mapped) {
+                await keyboard.releaseKey(mapped);
+            } else {
+                console.log('No release action for printable/unknown key:', keyOrCode);
+            }
             break;
+        }
         case 'click':
             const btnClick = data.button === 'left' ? Button.LEFT : 
                              data.button === 'right' ? Button.RIGHT : Button.MIDDLE;
